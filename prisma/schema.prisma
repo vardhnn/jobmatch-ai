@@ -1,0 +1,384 @@
+// JobMatch AI — V1 schema
+// Portable to Postgres later (String ids + DateTime work on both).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── Identity ───────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String?
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions          Session[]
+  resumes           Resume[]
+  profile           CandidateProfile?
+  preferences       JobPreferences?
+  jobSources        JobSource[]
+  matches           JobMatch[]
+  searchRuns        SearchRun[]
+  notifications     Notification[]
+  seenJobs         SeenJob[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ─────────────────────────── Resume ─────────────────────────────
+
+model Resume {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  storagePath  String
+  extractedText String?
+  status       String   @default("UPLOADED") // UPLOADED | EXTRACTING | EXTRACTED | PARSING | PARSED | FAILED
+  parseError   String?
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ─────────────────── Candidate profile ─────────────────────────
+
+model CandidateProfile {
+  id        String  @id @default(cuid())
+  userId    String  @unique
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name      String?
+  email     String?
+  phone     String?
+  linkedin  String?
+  github    String?
+  portfolio String?
+  summary   String?
+
+  experiences Experience[]
+  education   Education[]
+  projects    Project[]
+  skills      Skill[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Experience {
+  id          String            @id @default(cuid())
+  profileId   String
+  profile     CandidateProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  company     String
+  role        String
+  startDate   String?           // "2023-06" — month precision is enough for matching
+  endDate     String?           // null = present
+  description String?
+  technologies String?          // comma/JSON separated raw
+  sortOrder   Int               @default(0)
+
+  @@index([profileId])
+}
+
+model Education {
+  id             String           @id @default(cuid())
+  profileId      String
+  profile        CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  institution    String
+  degree         String
+  field          String?
+  startYear      Int?
+  graduationYear Int?
+  sortOrder      Int              @default(0)
+
+  @@index([profileId])
+}
+
+model Project {
+  id          String           @id @default(cuid())
+  profileId   String
+  profile     CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  technologies String?
+  url         String?
+  sortOrder   Int              @default(0)
+
+  @@index([profileId])
+}
+
+model Skill {
+  id        String           @id @default(cuid())
+  profileId String
+  profile   CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  name      String
+  category  String           @default("Other") // Programming|Frameworks|Libraries|Databases|Cloud|DevOps|AI_ML|Tools|Other
+  level     String?          // optional self-declared proficiency
+  sortOrder Int              @default(0)
+
+  @@unique([profileId, name, category])
+  @@index([profileId])
+}
+
+// ─────────────────────────── Preferences ────────────────────────
+
+model JobPreferences {
+  id        String @id @default(cuid())
+  userId    String @unique
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Roles
+  desiredRoles String @default("[]") // JSON string[]
+
+  // Location
+  workArrangement String @default("ANY") // REMOTE|HYBRID|ONSITE|ANY
+  preferredLocations String @default("[]") // JSON string[]
+  locationFlexibility String @default("SELECTED_ONLY") // SELECTED_ONLY|COUNTRY|WORLDWIDE
+  willingToRelocate Boolean @default(false)
+  maxCommuteMinutes Int?
+
+  // Salary
+  salaryMin     Int?
+  salaryMax     Int?
+  salaryCurrency String @default("USD")
+  salaryPeriod  String @default("ANNUAL") // ANNUAL|MONTHLY|HOURLY
+  includeJobsWithoutSalary Boolean @default(true)
+
+  // Employment & level
+  employmentTypes String @default("[\"FULL_TIME\"]") // JSON array of FULL_TIME|PART_TIME|INTERNSHIP|CONTRACT|TEMPORARY
+  experienceLevels String @default("[\"ENTRY\",\"JUNIOR\"]") // JSON array of ENTRY|JUNIOR|MID|SENIOR
+
+  // Companies
+  preferredCompanies String @default("[]")
+  excludedCompanies  String @default("[]")
+
+  // Freshness & search behavior
+  postedWithinDays Int @default(14)
+  includeRelatedTitles Boolean @default(true)
+  removeDuplicates      Boolean @default(true)
+  preferDirectApply     Boolean @default(true)
+  includeJobsWithoutSalarySearch Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────── Job sources ────────────────────────
+
+model JobSource {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String  // linkedin|indeed|naukri|remotive|arbeitnow|adzuna|development
+  enabled   Boolean @default(false)
+  status    String  @default("NOT_CONFIGURED") // CONNECTED|NOT_CONFIGURED|ERROR
+  statusDetail String?
+  config    String  @default("{}") // JSON of non-secret config (API key refs live in env only)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  records JobSourceRecord[]
+
+  @@unique([userId, key])
+  @@index([userId])
+}
+
+// ─────────────────────────── Jobs ───────────────────────────────
+
+model Job {
+  id             String   @id @default(cuid())
+  dedupeKey      String   @unique // canonical identity across sources
+  title          String
+  company        String
+  location       String?
+  remoteType     String   @default("UNKNOWN") // REMOTE|HYBRID|ONSITE|UNKNOWN
+  employmentType String?
+  experienceLevel String?
+  description    String?
+  requiredSkills String   @default("[]") // JSON string[]
+  preferredSkills String  @default("[]")
+  educationRequirement String?
+  salaryMin      Int?
+  salaryMax      Int?
+  salaryCurrency String?
+  salaryPeriod   String?
+  salaryOriginal String?  // raw text from source; never invented
+  postedDate     DateTime?
+  applicationUrl String?
+  seniority      String?
+
+  sourceRecords JobSourceRecord[]
+  analysis      JobAnalysis?
+  matches       JobMatch[]
+  seenBy        SeenJob[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([company])
+  @@index([title])
+  @@index([postedDate])
+  @@index([applicationUrl])
+  @@index([salaryMin])
+}
+
+model JobSourceRecord {
+  id          String   @id @default(cuid())
+  jobId       String?
+  job         Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  sourceId    String
+  source      JobSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  sourceJobId String
+  title       String
+  company     String
+  location    String?
+  applicationUrl String?
+  rawPayload  String   @default("{}") // original normalized-then-serialized source data
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([sourceId, sourceJobId])
+  @@index([jobId])
+  @@index([applicationUrl])
+}
+
+model JobAnalysis {
+  id            String   @id @default(cuid())
+  jobId         String   @unique
+  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  contentHash   String   // invalidate when job description changes
+  requiredSkills String  @default("[]")
+  preferredSkills String @default("[]")
+  responsibilities String @default("[]")
+  experienceRequirement String?
+  educationRequirement String?
+  seniority     String?
+  employmentType String?
+  remoteType    String?
+  location      String?
+  salaryMin     Int?
+  salaryMax     Int?
+  salaryCurrency String?
+  salaryOriginal String?
+  provider      String   // which AIProvider produced this
+  createdAt     DateTime @default(now())
+
+  @@index([contentHash])
+}
+
+model JobMatch {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId      String
+  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  overall    Int      // 0-100
+  category   String   // STRONG|POTENTIAL|LOW
+  decision   String   // SHOW|HIDE
+  skillsScore Int?
+  experienceScore Int?
+  roleScore  Int?
+  locationScore Int?
+  salaryScore Int?
+  employmentScore Int?
+  matchingSkills String @default("[]") // JSON string[]
+  missingSkills   String @default("[]")
+  niceToHaveSkills String @default("[]")
+  explanation String?
+  provider   String   // which DecisionProvider produced this
+  inputHash  String?  // hash of candidate+prefs inputs; recompute when it changes
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, jobId])
+  @@index([userId])
+  @@index([jobId])
+  @@index([userId, overall])
+}
+
+model SeenJob {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  firstSeenAt DateTime @default(now())
+
+  @@id([userId, jobId])
+  @@index([jobId])
+}
+
+// ─────────────────────────── Search runs ────────────────────────
+
+model SearchRun {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trigger     String   @default("MANUAL") // MANUAL|SCHEDULED
+  status      String   @default("RUNNING") // RUNNING|COMPLETED|FAILED
+  totalFound  Int      @default(0)
+  newJobs     Int      @default(0)
+  duplicates  Int      @default(0)
+  strongMatches Int    @default(0)
+  potentialMatches Int @default(0)
+  lowMatches  Int      @default(0)
+  sourcesTried Int     @default(0)  // enabled sources fanned out to
+  analyzed    Int      @default(0)  // jobs sent through analysis + JEV
+  sourceErrors String   @default("[]") // JSON [{source,code,message}]
+  sourceNotes  String   @default("[]") // JSON [string] — non-fatal advisories
+  searchedQueries String @default("[]") // JSON [string] — the subset actually sent to sources
+  error       String?
+  startedAt   DateTime @default(now())
+  finishedAt  DateTime?
+
+  queries SearchQuery[]
+
+  @@index([userId])
+  @@index([startedAt])
+}
+
+model SearchQuery {
+  id       String    @id @default(cuid())
+  runId    String
+  run      SearchRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  query    String
+  type     String    @default("PRIMARY") // PRIMARY|RELATED
+  approved Boolean   @default(true) // user can edit/disable generated queries
+
+  @@index([runId])
+}
+
+// ─────────────────────────── Notifications ──────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  kind      String   @default("DAILY_SUMMARY") // DAILY_SUMMARY|SOURCE_ERROR|INFO
+  payload   String   @default("{}") // JSON (e.g. { jobId })
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+}

@@ -1,0 +1,482 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────
+   JOBMATCH_AI design tokens — retro-modern / minimal / premium
+   Cream paper, charcoal ink, terminal green, warm amber.
+   ───────────────────────────────────────────────────────────── */
+
+:root {
+  /* Surfaces */
+  --paper: #f4f0e6;          /* warm off-white app background */
+  --panel: #fbf8f1;          /* card surface */
+  --panel-sunken: #efe9dc;   /* inset / wells */
+  --ink: #1c1b18;            /* primary text */
+  --ink-soft: #55524a;       /* secondary text */
+  --line: #ddd6c6;           /* thin borders */
+  --line-strong: #c7bfa9;
+
+  /* Accents */
+  --term: #3e7b52;           /* muted terminal green */
+  --term-deep: #2c5a3c;      /* dark green */
+  --term-wash: #e6efe7;      /* green tint surface */
+  --amber: #c8752a;          /* warm amber/orange */
+  --amber-wash: #f7ecdc;
+  --danger: #a8443c;
+  --danger-wash: #f6e6e2;
+  --muted: #8a8578;          /* muted gray */
+  --cream: #efe9dc;
+
+  /* Signal dots */
+  --dot-ok: #3e7b52;
+  --dot-warn: #c8752a;
+  --dot-idle: #8a8578;
+  --dot-off: #b9b3a3;
+
+  /* Shape */
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-pill: 999px;
+
+  /* Elevation — subtle, never heavy */
+  --shadow-sm: 0 1px 2px rgba(28, 27, 24, 0.06);
+  --shadow-md: 0 2px 8px rgba(28, 27, 24, 0.08);
+}
+
+/* ── Dark theme ───────────────────────────────────────────────
+   Charcoal surfaces, same terminal-green signal language.
+   Applied via <html data-theme="dark"> so it is SSR-safe, toggles
+   without re-rendering the tree, and survives a reload.
+   ─────────────────────────────────────────────────────────── */
+
+:root[data-theme="dark"] {
+  --paper: #14150f;
+  --panel: #1c1d17;
+  --panel-sunken: #232419;
+  --ink: #eceadf;
+  --ink-soft: #a8a698;
+  --line: #33342a;
+  --line-strong: #4a4b3d;
+
+  --term: #7fc496;
+  --term-deep: #a9dcba;
+  --term-wash: #1d2a20;
+  --amber: #e0a35f;
+  --amber-wash: #2b2418;
+  --danger: #e08a82;
+  --danger-wash: #2e1e1c;
+  --muted: #85836f;
+  --cream: #232419;
+
+  --dot-ok: #7fc496;
+  --dot-warn: #e0a35f;
+  --dot-idle: #85836f;
+  --dot-off: #4a4b3d;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-panel: var(--panel);
+  --color-sunken: var(--panel-sunken);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-term: var(--term);
+  --color-term-deep: var(--term-deep);
+  --color-term-wash: var(--term-wash);
+  --color-amber: var(--amber);
+  --color-amber-wash: var(--amber-wash);
+  --color-danger: var(--danger);
+  --color-danger-wash: var(--danger-wash);
+  --color-muted: var(--muted);
+  --color-cream: var(--cream);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono-face: var(--font-mono-raw), ui-monospace, "SFMono-Regular", monospace;
+
+  --radius-card: var(--radius);
+  --radius-control: var(--radius-sm);
+}
+
+body {
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  /* faint blueprint grid — retro without kitsch */
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--ink) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--ink) 4%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+:root[data-theme="dark"] body {
+  color-scheme: dark;
+}
+
+::selection {
+  background: var(--term-wash);
+  color: var(--term-deep);
+}
+
+/* Custom scrollbar — thin, unobtrusive */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* ── Responsive guards ───────────────────────────────────────
+   Grid and flex children default to `min-width: auto`, which means a single
+   unbreakable child (a long model id, a URL, a nowrap badge) can push the whole
+   column wider than the viewport and cause horizontal page scroll. Resetting to
+   `min-width: 0` lets `truncate`/`break-words` actually do their job. */
+.grid > *,
+.flex > * {
+  min-width: 0;
+}
+
+/* Long opaque strings (model ids, URLs, file paths) must wrap rather than
+   force the page sideways. */
+.break-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  /* Never allow the document itself to scroll sideways on small screens. */
+  html,
+  body {
+    overflow-x: hidden;
+  }
+}
+
+/* ── Small reusable utilities ──────────────────────────────── */
+
+@utility mono-label {
+  font-family: var(--font-mono-face);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/**
+ * Label tuned for dense four-across grids.
+ *
+ * At ~66–83px a tile cannot hold an 11px tracked label, and simply letting it
+ * break produced "POTENTI / AL". `break-words` was the wrong tool — it breaks
+ * inside words. This shrinks the type on small screens and enables real
+ * hyphenation instead, so a label that genuinely cannot fit breaks as
+ * "PO-TEN-TIAL" rather than mid-glyph.
+ */
+.mono-label-tight {
+  font-family: var(--font-mono-face);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  line-height: 1.25;
+  text-transform: uppercase;
+  color: var(--muted);
+  hyphens: auto;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+@media (min-width: 640px) {
+  .mono-label-tight {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+}
+
+@utility hairline {
+  border: 1px solid var(--line);
+}
+
+/* Subtle scanline texture for terminal-ish panels */
+@utility scanlines {
+  background-image: repeating-linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--ink) 3%, transparent) 0px,
+    color-mix(in srgb, var(--ink) 3%, transparent) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+@keyframes jm-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@keyframes jm-pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@keyframes jm-progress-stripes {
+  from { background-position: 0 0; }
+  to { background-position: 24px 0; }
+}
+
+@keyframes jm-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@utility cursor-blink {
+  animation: jm-blink 1.1s step-end infinite;
+}
+
+@utility pulse-dot {
+  animation: jm-pulse-dot 1.8s ease-in-out infinite;
+}
+
+@utility fade-up {
+  animation: jm-fade-up 0.35s ease-out both;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Motion system
+   ----------------------------------------------------------------
+   Three rules govern everything below:
+
+   1. Animate only `opacity` and `transform` (plus one deliberate `width`
+      on the score bars). Those never trigger layout or paint, so the page
+      stays cheap and — critically — never shifts. Anything that would move
+      a neighbour into place causes CLS, which is worse than no animation.
+   2. Every transform/opacity animation is reversible from the final state
+      alone, so reduced-motion can simply switch them off.
+   3. Scroll reveals are opt-in via [data-reveal] and are flipped by
+      MotionObserver. With JS disabled or IntersectionObserver missing the
+      page must still be fully readable — hence the visible-by-default
+      fallback below.
+   ──────────────────────────────────────────────────────────────── */
+
+/* Entrance curve. Matches jm-fade-up's easing family so motion introduced
+   here still feels like the same product as the app's own transitions. */
+@keyframes jm-reveal {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* Score bars fill from empty to their final width once revealed. */
+@keyframes jm-bar-fill {
+  from { width: 0%; }
+  to { width: var(--bar-w, 0%); }
+}
+
+/* Slow vertical drift for the hero's decorative layers. */
+@keyframes jm-drift {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -8px, 0); }
+}
+
+/* A single pass of light across the hero, not a loop — looping sheen reads
+   as a loading state that never resolves. */
+@keyframes jm-sheen {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(220%); }
+}
+
+@keyframes jm-ring {
+  from { opacity: 0.55; transform: scale(1); }
+  to { opacity: 0; transform: scale(1.9); }
+}
+
+/* --- Scroll reveal ------------------------------------------------
+   Start hidden ONLY once JS has marked the document as motion-capable.
+   `.js-motion` is added by MotionObserver before the first paint, so a
+   non-JS client never sees a blank page. */
+.reveal {
+  opacity: 1;
+  transform: none;
+}
+
+.js-motion .reveal {
+  opacity: 0;
+  transform: translate3d(0, 16px, 0);
+  transition:
+    opacity 0.62s cubic-bezier(0.22, 0.68, 0.28, 1),
+    transform 0.62s cubic-bezier(0.22, 0.68, 0.28, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+  will-change: opacity, transform;
+}
+
+.js-motion .reveal[data-shown] {
+  opacity: 1;
+  transform: none;
+}
+
+/* --- Animated score bar ------------------------------------------ */
+.bar-track {
+  position: relative;
+  overflow: hidden;
+  background: var(--panel-sunken);
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  width: var(--bar-w, 0%);
+  background: var(--term);
+  border-radius: inherit;
+}
+
+/* Idle state is the full bar; it only animates from zero when revealed. */
+.js-motion .reveal .bar-fill {
+  width: 0%;
+}
+
+.js-motion .reveal[data-shown] .bar-fill {
+  animation: jm-bar-fill 0.9s cubic-bezier(0.22, 0.68, 0.28, 1) both;
+  animation-delay: var(--bar-delay, 180ms);
+}
+
+/* --- Decorative -------------------------------------------------- */
+@keyframes jm-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+.float-slow { animation: jm-float 7s ease-in-out infinite; }
+
+.sheen { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.sheen::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  width: 45%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ink) 4%, transparent),
+    transparent
+  );
+  animation: jm-sheen 2.6s 0.9s ease-out both;
+}
+
+/* Soft pulse rings behind the hero badge. */
+.pulse-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1px solid var(--term);
+  animation: jm-ring 2.8s cubic-bezier(0.22, 0.68, 0.28, 1) infinite;
+}
+.pulse-ring:nth-child(2) { animation-delay: 0.9s; }
+.pulse-ring:nth-child(3) { animation-delay: 1.8s; }
+
+/* --- Card hover -------------------------------------------------- */
+.hover-lift {
+  transition:
+    transform 0.28s cubic-bezier(0.22, 0.68, 0.28, 1),
+    box-shadow 0.28s ease,
+    border-color 0.28s ease;
+}
+@media (hover: hover) {
+  .hover-lift:hover {
+    transform: translate3d(0, -3px, 0);
+    box-shadow: var(--shadow-md);
+    border-color: var(--line-strong);
+  }
+}
+
+/* --- Smooth in-page anchors -------------------------------------- */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Keyboard focus should be obvious everywhere, but only for keyboard users. */
+:where(a, button, input, textarea, select):focus-visible {
+  outline: 2px solid var(--term);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* --- Cursor-reactive grid --------------------------------------------
+   Same 32px lattice as the body background, but masked to a soft circle that
+   tracks the pointer. The lines near the cursor brighten; everything else
+   stays exactly as it was. Gradient + mask means no repaint of the page, only
+   a compositor update.
+
+   Sits at z-index 0 — above the body background, below page content, which is
+   why both layouts carry `relative z-10` on their root wrapper. It must never
+   intercept input, hence pointer-events: none. */
+.cursor-grid {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--term) 26%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--term) 26%, transparent) 1px, transparent 1px),
+    radial-gradient(
+      circle 220px at var(--mx, 50%) var(--my, 50%),
+      color-mix(in srgb, var(--term) 9%, transparent),
+      transparent 70%
+    );
+  background-size: 32px 32px, 32px 32px, 100% 100%;
+  -webkit-mask-image: radial-gradient(
+    circle 260px at var(--mx, 50%) var(--my, 50%),
+    #000 0%,
+    rgba(0, 0, 0, 0.35) 45%,
+    transparent 78%
+  );
+  mask-image: radial-gradient(
+    circle 260px at var(--mx, 50%) var(--my, 50%),
+    #000 0%,
+    rgba(0, 0, 0, 0.35) 45%,
+    transparent 78%
+  );
+}
+
+/* Touch devices have no hover, so the pointer never enters the frame and the
+   layer would only cost a full-screen composite. */
+@media (hover: none), (pointer: coarse) {
+  .cursor-grid {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor-grid {
+    display: none;
+  }
+}
+
+/* --- Reduced motion ------------------------------------------------
+   Motion is decoration here, never information: every animated element
+   ends in a readable, complete state. So switching motion off costs
+   nothing except the transition. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .js-motion .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .js-motion .reveal .bar-fill {
+    width: var(--bar-w, 0%) !important;
+    animation: none !important;
+  }
+  .float-slow,
+  .sheen::before,
+  .pulse-ring {
+    animation: none !important;
+  }
+  .cursor-blink,
+  .pulse-dot {
+    animation: none !important;
+  }
+}
