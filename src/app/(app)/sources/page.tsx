@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { RetroButton } from "@/components/ui/button";
 import { StatusBadge, StatusDot } from "@/components/ui/badge";
 import { ErrorBanner } from "@/components/ui/states";
+import { getActiveProfile, aiFetch, type AiProfile } from "@/lib/client/ai-keys";
 
 type Source = {
   key: string;
@@ -31,6 +32,7 @@ export default function SourcesPage() {
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<string | null>(null);
+  const [profile, setProfile] = useState<AiProfile | null>(null);
 
   const load = useCallback(async () => {
     const [srcRes, qRes] = await Promise.all([fetch("/api/sources"), fetch("/api/search/queries")]);
@@ -47,6 +49,7 @@ export default function SourcesPage() {
   useEffect(() => {
     (async () => {
       try {
+        setProfile(getActiveProfile());
         await load();
       } catch {
         setError("Could not load sources.");
@@ -121,7 +124,7 @@ export default function SourcesPage() {
     setError(null);
     setRunResult(null);
     try {
-      const res = await fetch("/api/search/run", { method: "POST" });
+      const res = await aiFetch("/api/search/run", { method: "POST" });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
         setError(data?.message ?? "Search failed.");
@@ -146,13 +149,19 @@ export default function SourcesPage() {
         title="Job sources"
         description="Each board is queried directly through its public API and normalized into the same shape, so scoring and ranking stay identical no matter where a job came from."
         actions={
-          <RetroButton
-            variant="primary"
-            onClick={runSearch}
-            disabled={running || enabled.length === 0}
-          >
-            {running ? "SEARCHING..." : "RUN SEARCH"}
-          </RetroButton>
+          profile ? (
+            <RetroButton
+              variant="primary"
+              onClick={runSearch}
+              disabled={running || enabled.length === 0}
+            >
+              {running ? "SEARCHING..." : "RUN SEARCH"}
+            </RetroButton>
+          ) : (
+            <Link href="/settings">
+              <RetroButton variant="primary">CONFIGURE AI →</RetroButton>
+            </Link>
+          )
         }
       />
 

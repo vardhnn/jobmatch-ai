@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireUser, UnauthorizedError } from "@/lib/auth";
 import { rateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { getAIProvider } from "@/lib/ai";
+import { parseAiCredential } from "@/lib/ai/credential-header";
 
 export const maxDuration = 120;
 
@@ -34,6 +35,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "UNAUTHORIZED", message: "Not signed in." }, { status: 401 });
   }
 
+  // BYOK: resume parsing is a pure AI feature — it cannot run without a key.
+  const credential = parseAiCredential(req);
+  if (!credential) {
+    return NextResponse.json(
+      {
+        error: "AI_NOT_CONFIGURED",
+        message: "Add your AI API key in Settings → Intelligence Layer to parse resumes.",
+      },
+      { status: 403 },
+    );
+  }
+
   const rl = rateLimit(rateLimitKey(req, "resume-parse"), 6, 60_000);
   if (!rl.ok) {
     return NextResponse.json(
@@ -57,9 +70,9 @@ export async function POST(req: Request) {
   try {
     await prisma.resume.update({ where: { id: resume.id }, data: { status: "PARSING", parseError: null } });
 
-    const ai = getAIProvider();
+    const ai = getAIProvider(credential);
     const parsed = await ai.parseResume(resume.extractedText);
-    const providerName = (ai as { lastProviderName?: string }).lastProviderName ?? ai.name;
+    const providerName = ai.name;
 
     // Persist into the structured candidate profile (upsert — re-parse replaces).
     const profile = await prisma.candidateProfile.upsert({

@@ -3,6 +3,7 @@
 import { createHash } from "crypto";
 import { prisma } from "@/lib/db";
 import { getAIProvider } from "@/lib/ai";
+import type { AiCredential } from "@/lib/ai/providers";
 import { getDecisionProvider } from "@/lib/jev";
 import { buildDecisionInputs } from "./profile-inputs";
 
@@ -21,7 +22,10 @@ const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 type AnalyzeOutcome = { cached: boolean; analysisId: string };
 
 /** Analyze a job once; reuse the cached analysis when content is unchanged. */
-export async function analyzeJobCached(jobId: string): Promise<AnalyzeOutcome | null> {
+export async function analyzeJobCached(
+  jobId: string,
+  credential: AiCredential,
+): Promise<AnalyzeOutcome | null> {
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) return null;
 
@@ -34,7 +38,7 @@ export async function analyzeJobCached(jobId: string): Promise<AnalyzeOutcome | 
     return { cached: true, analysisId: existing.id };
   }
 
-  const ai = getAIProvider();
+  const ai = getAIProvider(credential);
   const result = await ai.analyzeJob({
     title: job.title,
     company: job.company,
@@ -43,8 +47,7 @@ export async function analyzeJobCached(jobId: string): Promise<AnalyzeOutcome | 
     salaryOriginal: job.salaryOriginal,
   });
 
-
-  const providerName = (ai as { lastProviderName?: string }).lastProviderName ?? ai.name;
+  const providerName = ai.name;
 
   const saved = await prisma.jobAnalysis.upsert({
     where: { jobId },
@@ -113,21 +116,29 @@ export type MatchOutcome = {
  * missing analysis and missing profile all degrade gracefully — matching
  * never crashes on incomplete data.
  */
-export async function matchJobForUser(userId: string, jobId: string): Promise<MatchOutcome | null> {
+export async function matchJobForUser(
+  userId: string,
+  jobId: string,
+  credential: AiCredential,
+): Promise<MatchOutcome | null> {
   const [job, inputs] = await Promise.all([
     prisma.job.findUnique({ where: { id: jobId }, include: { analysis: true } }),
     buildDecisionInputs(userId),
   ]);
   if (!job) return null;
 
-  // Input hash covers everything the decision depends on besides the job itself.
+  // Input hash covers everything the decision depends on besides the job itself,
+  // including the active provider + model — switching either must recompute
+  // matches instead of serving another engine's cached verdicts.
   const inputHash = sha256(
     JSON.stringify({
       skills: inputs.candidate.skills,
       levels: inputs.candidate.experienceLevels,
       years: inputs.candidate.yearsOfExperience,
       prefs: inputs.preferences,
-      engine: getDecisionProvider().name,
+      engine: getDecisionProvider(credential).name,
+      provider: credential.provider,
+      model: credential.model,
     }),
   );
 
@@ -160,7 +171,7 @@ export async function matchJobForUser(userId: string, jobId: string): Promise<Ma
   }
 
   // Ensure analysis exists (cached inside).
-  await analyzeJobCached(jobId);
+  await analyzeJobCached(jobId, credential);
   const analysis =
     (await prisma.jobAnalysis.findUnique({ where: { jobId } })) ?? null;
 
@@ -183,7 +194,7 @@ export async function matchJobForUser(userId: string, jobId: string): Promise<Ma
     preferences: inputs.preferences,
   };
 
-  const engine = getDecisionProvider();
+  const engine = getDecisionProvider(credential);
   const verdict = await engine.evaluateJob(decisionInput);
 
   // Explanation: written once and cached, and only where it earns its cost —
@@ -191,7 +202,7 @@ export async function matchJobForUser(userId: string, jobId: string): Promise<Ma
   // breakdown instead, which keeps a 15-job search inside its time budget.
   let explanation = "";
   if (verdict.decision === "SHOW" && verdict.category !== "LOW") {
-    const ai = getAIProvider();
+    const ai = getAIProvider(credential);
     explanation = await ai.generateExplanation({
       jobTitle: job.title,
       company: job.company,

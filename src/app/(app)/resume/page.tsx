@@ -9,6 +9,7 @@ import { RetroButton } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/badge";
 import { ErrorBanner, EmptyState } from "@/components/ui/states";
 import { RetroProgress } from "@/components/ui/progress";
+import { getActiveProfile, aiFetch, type AiProfile } from "@/lib/client/ai-keys";
 
 type ResumeStatus = {
   id: string;
@@ -52,6 +53,7 @@ export default function ResumePage() {
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [justUploaded, setJustUploaded] = useState(false);
+  const [profile, setProfile] = useState<AiProfile | null>(null);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -72,6 +74,7 @@ export default function ResumePage() {
     let cancelled = false;
     (async () => {
       try {
+        setProfile(getActiveProfile());
         const res = await fetch("/api/resume/parse");
         if (!res.ok) return;
         const data = await res.json();
@@ -135,10 +138,14 @@ export default function ResumePage() {
     setParseStep(0);
     setParsing(true);
     try {
-      const res = await fetch("/api/resume/parse", { method: "POST" });
+      const res = await aiFetch("/api/resume/parse", { method: "POST" });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(data?.message ?? "AI parsing failed. You can retry or edit your profile manually.");
+        setError(
+          data?.error === "AI_NOT_CONFIGURED"
+            ? data?.message ?? "Add your AI key in Settings → Intelligence Layer to parse resumes."
+            : data?.message ?? "AI parsing failed. You can retry or edit your profile manually.",
+        );
         return;
       }
       router.refresh();
@@ -293,13 +300,25 @@ export default function ResumePage() {
         </Panel>
       ) : null}
 
-      {/* Empty state when nothing uploaded */}
-      {!resume && !loading ? (
+      {/* Empty state when nothing uploaded */}          {!resume && !loading ? (
         <EmptyState
           code="NO RESUME"
           title="No resume uploaded yet"
           body="Drop a PDF or DOCX above. JobMatch AI extracts your skills, experience, education and projects into an editable profile — nothing is sent to your target job boards."
         />
+      ) : null}
+
+      {!profile && !loading ? (
+        <Panel sunken className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <span className="text-sm text-ink-soft">
+            No AI key configured — uploads work, but AI parsing needs a key.
+          </span>
+          <Link href="/settings">
+            <RetroButton size="sm" variant="primary">
+              CONFIGURE AI →
+            </RetroButton>
+          </Link>
+        </Panel>
       ) : null}
 
       {/* Parse failure recovery */}

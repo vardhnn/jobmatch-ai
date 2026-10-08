@@ -39,7 +39,10 @@ export async function register() {
           const users = await prisma.user.findMany({ select: { id: true, email: true } });
           for (const user of users) {
             try {
-              const summary = await runSearchForUser(user.id, "SCHEDULED");
+              // BYOK: keys live in each user's browser, so scheduled runs have
+              // no credential — they fetch/store jobs only; matching happens
+              // on the next user-triggered search (orphan-analysis path).
+              const summary = await runSearchForUser(user.id, "SCHEDULED", null);
               console.log(
                 `[cron] ${user.email}: ${summary.newJobs} new, ${summary.strongMatches} strong, ${summary.potentialMatches} potential`,
               );

@@ -8,10 +8,10 @@ import type {
 import {
   callDecision,
   scoreAnswerToHundred,
-  OpenRouterError,
+  DEFAULT_JEV_MODEL,
   type DecisionAnswers,
-} from "@/lib/ai/openrouter-client";
-import { config } from "@/lib/config";
+} from "@/lib/ai/decisions";
+import { AiTransportError, type AiCredential } from "@/lib/ai/providers";
 import {
   scoreSkillMatch as heuristicSkillScore,
   evaluateExperience as heuristicExperience,
@@ -39,6 +39,8 @@ const LEVELS = ["no fit", "weak fit", "partial fit", "strong fit", "exact fit"];
 
 export class JevProvider implements DecisionProvider {
   readonly name = "jev";
+
+  constructor(private readonly credential: AiCredential) {}
 
   async evaluateJob(input: DecisionInput): Promise<DecisionResult> {
     // The deterministic skill/preference math runs locally — it is cheap,
@@ -143,7 +145,8 @@ export class JevProvider implements DecisionProvider {
             note: "Local set arithmetic; use as calibration, not as the answer.",
           },
         },
-        model: config.decision.jevModel,
+        credential: this.credential,
+        model: this.credential.model || DEFAULT_JEV_MODEL,
         timeoutMs: 60_000,
       });
 
@@ -151,7 +154,7 @@ export class JevProvider implements DecisionProvider {
     } catch (err) {
       // Graceful degradation: fall back to the deterministic engine, but label
       // the result honestly so the UI can show "dev engine (JEV unavailable)".
-      const detail = err instanceof OpenRouterError ? `${err.code}: ${err.message}` : String(err);
+      const detail = err instanceof AiTransportError ? `${err.code}: ${err.message}` : String(err);
       console.error(`[jev] JEV decision failed — using dev engine fallback: ${detail}`);
       return buildDeterministicDecision(
         { skills, prefs, experience, input },
@@ -265,7 +268,7 @@ export class JevProvider implements DecisionProvider {
 }
 
 function reasonsFallback(err: unknown): string[] {
-  const code = err instanceof OpenRouterError ? err.code : "UNKNOWN";
+  const code = err instanceof AiTransportError ? err.code : "UNKNOWN";
   return [`JEV unavailable (${code}) — dev engine decision used`];
 }
 

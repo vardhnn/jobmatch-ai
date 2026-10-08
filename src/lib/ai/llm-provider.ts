@@ -2,13 +2,14 @@
 
 import type { AIProvider, GeneratedQueries, JobAnalysisResult, ParsedResume } from "./types";
 import { AIPersistentError } from "./types";
+import type { AiCredential } from "./providers";
 import {
-  OpenRouterError,
+  AiTransportError,
   asNullableString,
   asNumber,
   asStringArray,
-  callJson,
-} from "./openrouter-client";
+  chatJson,
+} from "./providers";
 
 /** Shared validation so a hallucinating model can never poison the profile. */
 function validateParsedResume(raw: unknown): ParsedResume {
@@ -98,35 +99,44 @@ function validateJobAnalysis(raw: unknown): JobAnalysisResult {
 }
 
 /**
- * OpenRouter implementation of AIProvider (OpenAI-compatible endpoint).
- * All errors surface as AIPersistentError so the facade can fall back
- * to the offline heuristic provider without leaking transport details.
+ * Credential-bound implementation of AIProvider (BYOK).
+ *
+ * Every AI call is made with the caller's own credential. All errors surface
+ * as AIPersistentError so callers can collect per-job failures — there is NO
+ * automatic heuristic fallback here: when the model fails, the failure is
+ * reported honestly.
  */
-export class OpenRouterAIProvider implements AIProvider {
-  readonly name = "openrouter";
+export class CredentialBoundAIProvider implements AIProvider {
+  constructor(private readonly credential: AiCredential) {}
+
+  get name(): string {
+    return `${this.credential.provider}/${this.credential.model}`;
+  }
 
   private fail(stage: string, err: unknown): never {
     const detail =
-      err instanceof OpenRouterError
+      err instanceof AiTransportError
         ? `${err.code}: ${err.message}`
         : err instanceof Error
           ? err.message
           : String(err);
-    throw new AIPersistentError(`${stage} failed via OpenRouter — ${detail}`, err);
+    throw new AIPersistentError(`${stage} failed — ${detail}`, err);
   }
 
   async parseResume(resumeText: string): Promise<ParsedResume> {
-    const clipped = resumeText.slice(0, 24_000); // ~free-model context safety
+    const clipped = resumeText.slice(0, 24_000); // context-window safety
     try {
-      const raw = await callJson<unknown>([
-        {
-          role: "system",
-          content:
-            "You are a precise resume-structuring engine. Extract ONLY information present in the resume. Never invent employers, dates, skills or links. Omit fields you cannot find (use null / empty arrays). Respond with JSON only.",
-        },
-        {
-          role: "user",
-          content: `Extract a structured candidate profile from this resume text.
+      const raw = await chatJson<unknown>(
+        this.credential,
+        [
+          {
+            role: "system",
+            content:
+              "You are a precise resume-structuring engine. Extract ONLY information present in the resume. Never invent employers, dates, skills or links. Omit fields you cannot find (use null / empty arrays). Respond with JSON only.",
+          },
+          {
+            role: "user",
+            content: `Extract a structured candidate profile from this resume text.
 
 Return JSON exactly in this shape:
 {
@@ -143,8 +153,10 @@ Rules: endDate null means present. Dates use "YYYY-MM" (year-only → "YYYY"). S
 
 RESUME TEXT:
 ${clipped}`,
-        },
-      ]);
+          },
+        ],
+        { temperature: 0.2, maxTokens: 3000, timeoutMs: 90_000 },
+      );
       return validateParsedResume(raw);
     } catch (err) {
       this.fail("Resume parsing", err);
@@ -160,15 +172,17 @@ ${clipped}`,
   }): Promise<JobAnalysisResult> {
     const clipped = job.description.slice(0, 16_000);
     try {
-      const raw = await callJson<unknown>([
-        {
-          role: "system",
-          content:
-            "You are a job-requirement extraction engine. Extract ONLY what the posting states. Never invent salary figures, skills or requirements. If salary is absent, return null — never estimate. Respond with JSON only.",
-        },
-        {
-          role: "user",
-          content: `Analyze this job posting and extract structured requirements.
+      const raw = await chatJson<unknown>(
+        this.credential,
+        [
+          {
+            role: "system",
+            content:
+              "You are a job-requirement extraction engine. Extract ONLY what the posting states. Never invent salary figures, skills or requirements. If salary is absent, return null — never estimate. Respond with JSON only.",
+          },
+          {
+            role: "user",
+            content: `Analyze this job posting and extract structured requirements.
 
 Return JSON exactly in this shape:
 {
@@ -180,7 +194,7 @@ Return JSON exactly in this shape:
   "location": string|null,
   "salaryMin": number|null, "salaryMax": number|null, "salaryCurrency": string|null
 }
-Rules: salaryMin/salaryMax are ANNUAL amounts in the posting's currency as integers (e.g. 80000). Convert "$80K" → 80000. If the posting gives no salary numbers, use null for all salary fields. preferredSkills = nice-to-have. remoteType UNKNOWN if unclear. No markdown fences, JSON only.
+Rules: salaryMin/salaryMax are ANNUAL amounts in the posting's currency as integers (e.g. 80000). Convert "80K" → 80000. If the posting gives no salary numbers, use null for all salary fields. preferredSkills = nice-to-have. remoteType UNKNOWN if unclear. No markdown fences, JSON only.
 
 JOB:
 TITLE: ${job.title}
@@ -191,7 +205,9 @@ SALARY (raw text): ${job.salaryOriginal ?? "not stated"}
 DESCRIPTION:
 ${clipped}`,
         },
-      ], { temperature: 0.1, maxTokens: 1200, timeoutMs: 30_000 });
+        ],
+        { temperature: 0.1, maxTokens: 1200, timeoutMs: 30_000 },
+      );
       return validateJobAnalysis(raw);
     } catch (err) {
       this.fail("Job analysis", err);
@@ -206,7 +222,8 @@ ${clipped}`,
     experienceLevels: string[];
   }): Promise<GeneratedQueries> {
     try {
-      const raw = await callJson<unknown>(
+      const raw = await chatJson<unknown>(
+        this.credential,
         [
           {
             role: "system",
@@ -259,7 +276,8 @@ Rules: "primary" = 2-4 direct queries based on desired roles. "related" = 4-8 cl
     candidateSkills: string[];
   }): Promise<string> {
     try {
-      const raw = await callJson<unknown>(
+      const raw = await chatJson<unknown>(
+        this.credential,
         [
           {
             role: "system",

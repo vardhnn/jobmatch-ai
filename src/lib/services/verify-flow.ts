@@ -2,7 +2,7 @@
 
 import { createHash } from "crypto";
 import { prisma } from "@/lib/db";
-import { getAIProvider } from "@/lib/ai";
+import type { AiCredential } from "@/lib/ai/providers";
 import { matchJobForUser } from "./job-matching-service";
 
 /**
@@ -15,6 +15,14 @@ import { matchJobForUser } from "./job-matching-service";
  */
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+
+/** Scripts/tests use the internal offline engine explicitly — never over HTTP. */
+const CREDENTIAL: AiCredential = {
+  provider: "heuristic",
+  apiKey: "local-script",
+  model: "heuristic",
+  baseUrl: null,
+};
 
 const SAMPLE_RESUME = `VISHNU VARDHAN
 vishnu.vardhan@example.com | +91 98765 43210
@@ -107,12 +115,13 @@ export async function verifyFullFlow(): Promise<{
 
   try {
     // ── Stage 1: Resume → AI Profile ────────────────────────────
-    const ai = getAIProvider();
+    const { getAIProvider } = await import("@/lib/ai");
+    const ai = getAIProvider(CREDENTIAL);
     const parsed = await ai.parseResume(SAMPLE_RESUME);
     if (!parsed.name || parsed.skills.length === 0) {
       errors.push("Resume parsing produced no name/skills");
     } else {
-      stages["1_resume_parse"] = `ok (${parsed.skills.length} skills, provider=${(ai as { lastProviderName?: string }).lastProviderName ?? ai.name})`;
+      stages["1_resume_parse"] = `ok (${parsed.skills.length} skills, provider=${ai.name})`;
     }
 
     // Persist into the real profile shape
@@ -134,8 +143,8 @@ export async function verifyFullFlow(): Promise<{
     const jobs = await prisma.job.findMany({ where: { dedupeKey: { in: SAMPLE_JOBS.map((j) => j.dedupeKey) } } });
 
     const { analyzeJobCached } = await import("./job-matching-service");
-    const first = await analyzeJobCached(jobs[0].id);
-    const second = await analyzeJobCached(jobs[0].id);
+    const first = await analyzeJobCached(jobs[0].id, CREDENTIAL);
+    const second = await analyzeJobCached(jobs[0].id, CREDENTIAL);
     if (!first || !second) {
       errors.push("Job analysis returned null");
     } else {
@@ -144,8 +153,8 @@ export async function verifyFullFlow(): Promise<{
     }
 
     // ── Stage 3: JEV Matching ───────────────────────────────────
-    const m1 = await matchJobForUser(user.id, jobs[0].id);
-    const m2 = await matchJobForUser(user.id, jobs[0].id);
+    const m1 = await matchJobForUser(user.id, jobs[0].id, CREDENTIAL);
+    const m2 = await matchJobForUser(user.id, jobs[0].id, CREDENTIAL);
     if (!m1 || !m2) {
       errors.push("Matching returned null");
     } else {
@@ -182,7 +191,7 @@ export async function verifyFullFlow(): Promise<{
       },
     });
     const excludedJob = await prisma.job.findUnique({ where: { dedupeKey: "test-job-excluded" } });
-    const mExcl = excludedJob ? await matchJobForUser(user.id, excludedJob.id) : null;
+    const mExcl = excludedJob ? await matchJobForUser(user.id, excludedJob.id, CREDENTIAL) : null;
     if (mExcl && mExcl.decision !== "HIDE") {
       errors.push(`Excluded company was not HIDE (got ${mExcl.decision})`);
     } else {
@@ -190,7 +199,7 @@ export async function verifyFullFlow(): Promise<{
     }
 
     // ── Stage 6: Missing salary/location don't crash ────────────
-    const mNoSalary = await matchJobForUser(user.id, jobs[1].id);
+    const mNoSalary = await matchJobForUser(user.id, jobs[1].id, CREDENTIAL);
     if (!mNoSalary) {
       errors.push("Missing-salary job crashed matching");
     } else {
@@ -212,7 +221,7 @@ export async function verifyFullFlow(): Promise<{
       where: { userId: user.id },
       data: { salaryMax: 60000 },
     });
-    const m3 = await matchJobForUser(user.id, jobs[0].id);
+    const m3 = await matchJobForUser(user.id, jobs[0].id, CREDENTIAL);
     if (m3 && m3.fromCache) errors.push("Preferences changed but match still served from cache");
     else stages["8_invalidation"] = "ok (prefs change → recompute)";
   } catch (err) {

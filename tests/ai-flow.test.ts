@@ -1,102 +1,122 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Env must be set before config.ts is imported (imports are hoisted).
-vi.hoisted(() => {
-  process.env.AI_PROVIDER = "openrouter";
-  process.env.OPENROUTER_API_KEY = "test-key-123";
-  process.env.OPENROUTER_MODEL = "google/gemma-4-26b-a4b-it:free";
-  process.env.DECISION_PROVIDER = "jev";
-  process.env.JEV_MODEL = "typesafe/jev-1.13";
-});
-
-/**
- * End-to-end verification of the OpenRouter migration.
+/** End-to-end verification of the BYOK AI layer.
  *
- * The OpenRouter HTTP client is mocked globally so the suite runs offline
- * and deterministically; the real client's error/retry logic is exercised
- * separately against a stubbed fetch.
+ * All HTTP (chat endpoints + the OpenRouter Decisions API) is stubbed so the
+ * suite runs offline and deterministically. The transport's error/retry rules
+ * are exercised against the stubbed fetch; wire-shape details live in
+ * tests/byok-providers.test.ts.
+ *
+ * Credentials are now explicit per-provider objects — there are no AI env
+ * vars to set, and no global singleton provider to import.
  */
 
-// ── Mock fetch before any imports that transitively use it ──────
-const fetchCalls: { url: string; body: Record<string, unknown> }[] = [];
-let mockMode: "ok" | "rate-limited" | "server-error" | "garbage" | "empty" = "ok";
+// ── fetch stub ──────────────────────────────────────────────────────
 
-const okResponse = (content: object | string) => ({
-  ok: true,
-  status: 200,
-  headers: new Headers(),
-  json: async () => ({
-    model: "google/gemma-4-26b-a4b-it:free",
-    choices: [
-      {
-        message: {
-          content:
-            typeof content === "string" ? content : `\`\`\`json\n${JSON.stringify(content)}\n\`\`\``,
-        },
-      },
-    ],
-    usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
-  }),
-  text: async () => "",
+type RecordedCall = { url: string; headers: Record<string, string>; body: Record<string, unknown> };
+
+let calls: RecordedCall[] = [];
+let responder: (call: RecordedCall, attempt: number) => Response = () => new Response("{}", { status: 200 });
+
+function jsonResponse(payload: unknown, status = 200, headers: Record<string, string> = {}) {
+  return new Response(JSON.stringify(payload), { status, headers });
+}
+
+function openAiOk(content: string) {
+  return jsonResponse(
+    {
+      model: "test-model",
+      choices: [{ message: { content } }],
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+    },
+    200,
+  );
+}
+
+beforeEach(() => {
+  calls = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const headers: Record<string, string> = {};
+      new Headers(init?.headers).forEach((v, k) => (headers[k.toLowerCase()] = v));
+      let body: Record<string, unknown> = {};
+      if (typeof init?.body === "string") {
+        body = JSON.parse(init.body);
+      }
+      const call = { url, headers, body };
+      calls.push(call);
+      return responder(call, calls.length);
+    }),
+  );
 });
 
-vi.stubGlobal(
-  "fetch",
-  vi.fn(async (url: string | URL, init?: { body?: string }) => {
-    const body = init?.body ? (JSON.parse(init.body) as Record<string, unknown>) : {};
-    fetchCalls.push({ url: String(url), body });
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
-    if (mockMode === "rate-limited") {
-      return { ok: false, status: 429, headers: new Headers(), text: async () => "rate limited" };
-    }
-    if (mockMode === "server-error") {
-      return { ok: false, status: 503, headers: new Headers(), text: async () => "upstream down" };
-    }
-    if (mockMode === "garbage") {
-      return okResponse("This is not JSON at all, sorry!");
-    }
-    if (mockMode === "empty") {
-      return {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: async () => ({ choices: [] }),
-      };
-    }
+function routeBySystemPrompt(body: Record<string, unknown>): Response {
+  const messages = (body.messages as { role: string; content: string }[]) ?? [];
+  const sys = messages.find((m) => m.role === "system")?.content ?? "";
 
-    // Route by system prompt content.
-    const messages = (body.messages as { role: string; content: string }[]) ?? [];
-    const sys = messages.find((m) => m.role === "system")?.content ?? "";
+  if (sys.includes("resume-structuring")) {
+    return openAiOk(
+      "```json\n" +
+        JSON.stringify({
+          name: "Vishnu Vardhan",
+          email: "vishnu.vardhan@example.com",
+          phone: "+91 98765 43210",
+          linkedin: "linkedin.com/in/vishnu-vardhan",
+          github: "github.com/vishnuvardhan",
+          portfolio: null,
+          summary: "Backend engineer focused on Python services.",
+          skills: [
+            "Python",
+            "FastAPI",
+            "PostgreSQL",
+            "REST APIs",
+            "Git",
+            "Docker",
+            "React",
+            "TypeScript",
+          ],
+          experiences: [
+            {
+              company: "Acme Corp",
+              role: "Software Engineer",
+              startDate: "2023-06",
+              endDate: null,
+              description: "Built REST APIs.",
+              technologies: ["FastAPI", "PostgreSQL"],
+            },
+          ],
+          education: [
+            {
+              institution: "JNTU Hyderabad",
+              degree: "B.Tech",
+              field: "Computer Science",
+              startYear: 2017,
+              graduationYear: 2021,
+            },
+          ],
+          projects: [
+            { name: "JobBoard Aggregator", description: "Aggregated listings.", technologies: ["Python"], url: null },
+          ],
+          certifications: [],
+        }) +
+        "\n```",
+    );
+  }
 
-    if (sys.includes("resume-structuring")) {
-      return okResponse({
-        name: "Vishnu Vardhan",
-        email: "vishnu.vardhan@example.com",
-        phone: "+91 98765 43210",
-        linkedin: "linkedin.com/in/vishnu-vardhan",
-        github: "github.com/vishnuvardhan",
-        portfolio: null,
-        summary: "Backend engineer focused on Python services.",
-        skills: ["Python", "FastAPI", "PostgreSQL", "REST APIs", "Git", "Docker", "React", "TypeScript"],
-        experiences: [
-          {
-            company: "Acme Corp",
-            role: "Software Engineer",
-            startDate: "2023-06",
-            endDate: null,
-            description: "Built REST APIs.",
-            technologies: ["FastAPI", "PostgreSQL"],
-          },
-        ],
-        education: [
-          { institution: "JNTU Hyderabad", degree: "B.Tech", field: "Computer Science", startYear: 2017, graduationYear: 2021 },
-        ],
-        projects: [{ name: "JobBoard Aggregator", description: "Aggregated listings.", technologies: ["Python"], url: null }],
-        certifications: [],
-      });
-    }
-    if (sys.includes("job-requirement extraction")) {
-      return okResponse({
+  if (sys.includes("job-requirement extraction")) {
+    return openAiOk(
+      JSON.stringify({
         requiredSkills: ["Python", "FastAPI", "PostgreSQL", "REST APIs", "Git"],
         preferredSkills: ["AWS", "Docker", "Kubernetes"],
         responsibilities: ["Build APIs", "Own services"],
@@ -109,42 +129,49 @@ vi.stubGlobal(
         salaryMin: 60000,
         salaryMax: 90000,
         salaryCurrency: "USD",
-      });
-    }
-    if (sys.includes("job-search queries")) {
-      return okResponse({
+      }),
+    );
+  }
+
+  if (sys.includes("job-search queries")) {
+    return openAiOk(
+      JSON.stringify({
         primary: ["Python Developer", "Backend Developer"],
         related: ["Backend Engineer Python", "API Developer", "Python Software Engineer"],
-      });
-    }
-    if (sys.includes("job-fit decision engine")) {
-      return okResponse({
-        overall: 87,
-        category: "STRONG",
-        decision: "SHOW",
-        sub_scores: { skills: 92, experience: 85, role: 96, location: 100, salary: 90, employment: 100 },
-        matching_skills: ["Python"],
-        missing_skills: [],
-        nice_to_have_skills: [],
-        reasons: ["Strong skill overlap"],
-      });
-    }
-    if (sys.includes("job-match explanations")) {
-      return okResponse({
+      }),
+    );
+  }
+
+  if (sys.includes("job-match explanations")) {
+    return openAiOk(
+      JSON.stringify({
         explanation:
           "Your Python, FastAPI and PostgreSQL experience directly overlaps with the core requirements. The role accepts entry-level candidates and matches your selected work preferences. POTENTIAL GAP: AWS and Docker are not currently present in your profile.",
-      });
-    }
+      }),
+    );
+  }
 
-    return okResponse({});
-  }),
-);
+  return openAiOk("{}");
+}
 
-import { extractJson, OpenRouterError } from "@/lib/ai/openrouter-client";
-import { OpenRouterAIProvider } from "@/lib/ai/openrouter-provider";
-import { HeuristicAIProvider } from "@/lib/ai/heuristic-provider";
-import { HeuristicDecisionProvider } from "@/lib/jev/dev-provider";
-import { scoreSkillMatch } from "@/lib/jev/heuristics";
+function decisionsOk() {
+  return jsonResponse(
+    {
+      answers: {
+        fit: { type: "choice", choice: "STRONG", confidence: 0.9 },
+        overall: { type: "score", score: 3, probabilities: { "3": 1 } },
+        skills: { type: "score", score: 3, probabilities: { "3": 1 } },
+        experience: { type: "score", score: null, probabilities: {} },
+        role: { type: "score", score: 4, probabilities: { "4": 1 } },
+        location: { type: "score", score: null, probabilities: {} },
+        salary: { type: "score", score: null, probabilities: {} },
+        employment: { type: "score", score: null, probabilities: {} },
+        worth_showing: { type: "noul", noul: 0.8 },
+      },
+    },
+    200,
+  );
+}
 
 const SAMPLE_RESUME = `VISHNU VARDHAN
 vishnu.vardhan@example.com | +91 98765 43210
@@ -167,32 +194,85 @@ const JOB_INPUT = {
   salaryOriginal: "$60,000 - $90,000",
 };
 
-describe("extractJson", () => {
-  it("parses plain JSON", () => {
-    expect(extractJson('{"a":1}')).toEqual({ a: 1 });
-  });
-  it("parses fenced JSON", () => {
-    expect(extractJson('Sure!\n```json\n{"a":1}\n```\ndone')).toEqual({ a: 1 });
-  });
-  it("parses JSON embedded in prose", () => {
-    expect(extractJson('Here you go: {"a":[1,2]} hope that helps')).toEqual({ a: [1, 2] });
-  });
-  it("throws OpenRouterError on garbage", () => {
-    expect(() => extractJson("no json here")).toThrow(OpenRouterError);
-  });
-});
+const JOB_DECISION_INPUT = {
+  job: {
+    title: "Python Backend Developer",
+    company: "Alpha",
+    location: "Hyderabad, India",
+    remoteType: "HYBRID",
+    employmentType: "Full-time",
+    requiredSkills: ["Python", "FastAPI", "PostgreSQL", "REST APIs"],
+    preferredSkills: ["AWS", "Docker"],
+    experienceRequirement: "2+ years",
+    seniority: null,
+    salaryMin: 60000,
+    salaryMax: 90000,
+    salaryCurrency: "USD",
+  },
+  candidate: {
+    skills: ["Python", "FastAPI", "PostgreSQL", "REST APIs", "Git"],
+    experienceLevels: ["ENTRY", "JUNIOR"],
+    seniority: null,
+    yearsOfExperience: 2,
+  },
+  preferences: {
+    desiredRoles: ["Python Developer", "Backend Developer"],
+    workArrangement: "ANY",
+    preferredLocations: ["Hyderabad, India"],
+    locationFlexibility: "WORLDWIDE",
+    willingToRelocate: false,
+    salaryMin: 50000,
+    salaryMax: 100000,
+    salaryCurrency: "USD",
+    employmentTypes: ["FULL_TIME"],
+    experienceLevels: ["ENTRY", "JUNIOR"],
+    preferredCompanies: [],
+    excludedCompanies: [],
+    includeJobsWithoutSalary: true,
+  },
+};
 
-describe("OpenRouterAIProvider", () => {
-  const provider = new OpenRouterAIProvider();
+import type { AiCredential } from "@/lib/ai/providers";
+import { CredentialBoundAIProvider } from "@/lib/ai/llm-provider";
+import { HeuristicAIProvider } from "@/lib/ai/heuristic-provider";
+import { getAIProvider } from "@/lib/ai";
+import { JevProvider } from "@/lib/jev/jev-provider";
+import { HeuristicDecisionProvider } from "@/lib/jev/dev-provider";
+import { getDecisionProvider } from "@/lib/jev";
+import { scoreSkillMatch } from "@/lib/jev/heuristics";
+import { AiNotConfiguredError } from "@/lib/ai/types";
 
-  it("parses a resume through OpenRouter", async () => {
+const OPENAI: AiCredential = {
+  provider: "openai",
+  apiKey: "sk-test-byok",
+  model: "gpt-test-1",
+  baseUrl: "https://api.example.com/v1",
+};
+
+const OR_CRED: AiCredential = {
+  provider: "openrouter",
+  apiKey: "sk-or-test-123",
+  model: "typesafe/jev-1.13",
+};
+
+describe("CredentialBoundAIProvider", () => {
+  const provider = new CredentialBoundAIProvider(OPENAI);
+
+  it("exposes a provider/model name", () => {
+    expect(provider.name).toBe("openai/gpt-test-1");
+  });
+
+  it("parses a resume through the credential-bound provider", async () => {
+    responder = (call) => routeBySystemPrompt(call.body);
     const r = await provider.parseResume(SAMPLE_RESUME);
     expect(r.name).toBe("Vishnu Vardhan");
     expect(r.skills).toContain("FastAPI");
     expect(r.experiences[0]?.company).toBe("Acme Corp");
+    expect(calls.at(-1)?.headers["authorization"]).toBe("Bearer sk-test-byok");
   });
 
   it("sanitizes hallucinated salary values out", async () => {
+    responder = (call) => routeBySystemPrompt(call.body);
     const r = await provider.analyzeJob(JOB_INPUT);
     expect(r.requiredSkills).toContain("Python");
     expect(r.salaryMin).toBe(60000);
@@ -201,6 +281,7 @@ describe("OpenRouterAIProvider", () => {
   });
 
   it("generates bounded queries", async () => {
+    responder = (call) => routeBySystemPrompt(call.body);
     const r = await provider.generateSearchQueries({
       profileSummary: "Backend engineer",
       desiredRoles: ["Python Developer"],
@@ -214,10 +295,20 @@ describe("OpenRouterAIProvider", () => {
   });
 
   it("generates an explanation referencing skills", async () => {
+    responder = (call) => routeBySystemPrompt(call.body);
     const r = await provider.generateExplanation({
       jobTitle: "Python Backend Developer",
       company: "Alpha",
-      matchSummary: { overall: 87, category: "STRONG", skillsScore: 92, experienceScore: 85, roleScore: 96, locationScore: 100, salaryScore: 90, employmentScore: 100 },
+      matchSummary: {
+        overall: 87,
+        category: "STRONG",
+        skillsScore: 92,
+        experienceScore: 85,
+        roleScore: 96,
+        locationScore: 100,
+        salaryScore: 90,
+        employmentScore: 100,
+      },
       matchingSkills: ["Python", "FastAPI"],
       missingSkills: ["AWS"],
       niceToHaveSkills: [],
@@ -225,9 +316,38 @@ describe("OpenRouterAIProvider", () => {
     });
     expect(r).toContain("Python");
   });
+
+  it("surfaces garbage JSON as a persistent error", async () => {
+    responder = () => openAiOk("This is not JSON at all, sorry!");
+    await expect(
+      provider.generateSearchQueries({
+        profileSummary: "x",
+        desiredRoles: ["A"],
+        skills: [],
+        preferredLocations: [],
+        experienceLevels: [],
+      }),
+    ).rejects.toThrow(/Search query generation failed/i);
+  });
 });
 
-describe("HeuristicAIProvider (offline fallback)", () => {
+describe("getAIProvider facade", () => {
+  it("throws AiNotConfiguredError when no credential is present", () => {
+    expect(() => getAIProvider(null)).toThrow(AiNotConfiguredError);
+  });
+
+  it("wraps a credential in a CredentialBoundAIProvider", () => {
+    expect(getAIProvider(OPENAI).name).toBe("openai/gpt-test-1");
+  });
+
+  it("maps the internal heuristic pseudo-provider to the offline engine", () => {
+    expect(
+      getAIProvider({ provider: "heuristic", apiKey: "local", model: "heuristic" }).name,
+    ).toBe("heuristic");
+  });
+});
+
+describe("HeuristicAIProvider (server-side offline engine)", () => {
   const provider = new HeuristicAIProvider();
 
   it("extracts contact info and skills without a model", async () => {
@@ -245,7 +365,11 @@ describe("HeuristicAIProvider (offline fallback)", () => {
   });
 
   it("never invents salary when absent", async () => {
-    const r = await provider.analyzeJob({ ...JOB_INPUT, salaryOriginal: null, description: "Python role." });
+    const r = await provider.analyzeJob({
+      ...JOB_INPUT,
+      salaryOriginal: null,
+      description: "Python role.",
+    });
     expect(r.salaryMin).toBeNull();
     expect(r.salaryMax).toBeNull();
   });
@@ -254,38 +378,7 @@ describe("HeuristicAIProvider (offline fallback)", () => {
 describe("Decision engines", () => {
   it("dev engine scores skill overlap and lists gaps", async () => {
     const engine = new HeuristicDecisionProvider();
-    const r = await engine.evaluateJob({
-      job: {
-        title: "Python Backend Developer",
-        company: "Alpha",
-        location: "Hyderabad, India",
-        remoteType: "HYBRID",
-        employmentType: "Full-time",
-        requiredSkills: ["Python", "FastAPI", "PostgreSQL", "REST APIs"],
-        preferredSkills: ["AWS", "Docker"],
-        experienceRequirement: "2+ years",
-        seniority: null,
-        salaryMin: 60000,
-        salaryMax: 90000,
-        salaryCurrency: "USD",
-      },
-      candidate: { skills: ["Python", "FastAPI", "PostgreSQL", "REST APIs", "Git"], experienceLevels: ["ENTRY", "JUNIOR"], seniority: null, yearsOfExperience: 2 },
-      preferences: {
-        desiredRoles: ["Python Developer", "Backend Developer"],
-        workArrangement: "ANY",
-        preferredLocations: ["Hyderabad, India"],
-        locationFlexibility: "WORLDWIDE",
-        willingToRelocate: false,
-        salaryMin: 50000,
-        salaryMax: 100000,
-        salaryCurrency: "USD",
-        employmentTypes: ["FULL_TIME"],
-        experienceLevels: ["ENTRY", "JUNIOR"],
-        preferredCompanies: [],
-        excludedCompanies: [],
-        includeJobsWithoutSalary: true,
-      },
-    });
+    const r = await engine.evaluateJob(JOB_DECISION_INPUT);
     expect(r.matchingSkills).toContain("Python");
     expect(r.missingSkills.length).toBe(0);
     expect(r.niceToHaveSkills).toEqual(expect.arrayContaining(["AWS", "Docker"]));
@@ -299,29 +392,152 @@ describe("Decision engines", () => {
   });
 });
 
-describe("OpenRouter client resilience", () => {
+describe("JevProvider (OpenRouter-only BYOK)", () => {
+  it("hits the Decisions endpoint with the user's key and builds a result", async () => {
+    responder = (call) => {
+      if (call.url.includes("/api/alpha/decisions")) return decisionsOk();
+      return new Response("{}", { status: 200 });
+    };
+    const engine = new JevProvider(OR_CRED);
+    const r = await engine.evaluateJob(JOB_DECISION_INPUT);
+
+    expect(calls.at(-1)?.url).toBe("https://openrouter.ai/api/alpha/decisions");
+    expect(calls.at(-1)?.headers["authorization"]).toBe("Bearer sk-or-test-123");
+    expect(r.category).toBe("STRONG");
+    expect(r.decision).toBe("SHOW");
+    expect(r.reasons.some((x) => x.includes("80%") && x.includes("surfacing"))).toBe(true);
+    expect(r.subScores.skills).toBe(75);
+  });
+
+  it("falls back to the dev engine (labelled jev-fallback) on transport failure", async () => {
+    responder = () => new Response("upstream down", { status: 503 });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const engine = new JevProvider(OR_CRED);
+    const r = await engine.evaluateJob({
+      job: {
+        title: "Python Backend Developer",
+        company: "Alpha",
+        location: "Hyderabad, India",
+        remoteType: "HYBRID",
+        employmentType: "Full-time",
+        requiredSkills: ["Python", "FastAPI"],
+        preferredSkills: [],
+        experienceRequirement: null,
+        seniority: null,
+        salaryMin: null,
+        salaryMax: null,
+        salaryCurrency: "USD",
+      },
+      candidate: {
+        skills: ["Python"],
+        experienceLevels: ["ENTRY"],
+        seniority: null,
+        yearsOfExperience: 1,
+      },
+      preferences: {
+        desiredRoles: ["Python Developer"],
+        workArrangement: "ANY",
+        preferredLocations: [],
+        locationFlexibility: "WORLDWIDE",
+        willingToRelocate: false,
+        salaryMin: null,
+        salaryMax: null,
+        salaryCurrency: "USD",
+        employmentTypes: [],
+        experienceLevels: ["ENTRY"],
+        preferredCompanies: [],
+        excludedCompanies: [],
+        includeJobsWithoutSalary: true,
+      },
+    });
+    expect(r.reasons.some((x) => x.startsWith("jev-fallback"))).toBe(true);
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("[jev]"))).toBe(true);
+    errSpy.mockRestore();
+  });
+});
+
+describe("getDecisionProvider facade", () => {
+  it("returns JEV only for OpenRouter credentials", () => {
+    expect(
+      getDecisionProvider({ provider: "openrouter", apiKey: "k", model: "typesafe/jev-1.13" }).name,
+    ).toBe("jev");
+    expect(
+      getDecisionProvider({ provider: "openai", apiKey: "k", model: "gpt-4o-mini" }).name,
+    ).toBe("heuristic-dev");
+    expect(getDecisionProvider(null).name).toBe("heuristic-dev");
+  });
+});
+
+describe("Transport resilience (BYOK)", () => {
   it("retries on 429 then succeeds", async () => {
-    mockMode = "rate-limited";
-    const provider = new OpenRouterAIProvider();
-    const p = provider.generateSearchQueries({
+    let attempts = 0;
+    responder = (call) => {
+      attempts++;
+      if (attempts === 1) return new Response("rate limited", { status: 429, headers: { "retry-after": "0" } });
+      return routeBySystemPrompt(call.body);
+    };
+    const provider = new CredentialBoundAIProvider(OPENAI);
+    const r = await provider.generateSearchQueries({
       profileSummary: "x",
       desiredRoles: ["A"],
       skills: [],
       preferredLocations: [],
       experienceLevels: [],
     });
-    // flip to ok after first attempt so retry succeeds
-    setTimeout(() => (mockMode = "ok"), 50);
-    const r = await p;
     expect(r.primary.length).toBeGreaterThan(0);
+    expect(attempts).toBeGreaterThanOrEqual(2);
   });
 
-  it("surfaces garbage JSON as fallback-able error", async () => {
-    mockMode = "garbage";
-    const provider = new OpenRouterAIProvider();
+  it("retries 5xx then succeeds", async () => {
+    let attempts = 0;
+    const before = calls.length;
+    responder = (call) => {
+      attempts++;
+      if (attempts === 1) return new Response("upstream down", { status: 503 });
+      return routeBySystemPrompt(call.body);
+    };
+    const provider = new CredentialBoundAIProvider(OPENAI);
+    const r = await provider.generateSearchQueries({
+      profileSummary: "x",
+      desiredRoles: ["A"],
+      skills: [],
+      preferredLocations: [],
+      experienceLevels: [],
+    });
+    expect(r.primary.length).toBeGreaterThan(0);
+    expect(calls.length - before).toBeGreaterThanOrEqual(2);
+  });
+
+  it("fails fast on 4xx without burning retries", async () => {
+    responder = () => new Response("bad key", { status: 401 });
+    const provider = new CredentialBoundAIProvider(OPENAI);
     await expect(
-      provider.generateSearchQueries({ profileSummary: "x", desiredRoles: ["A"], skills: [], preferredLocations: [], experienceLevels: [] }),
-    ).rejects.toThrow();
-    mockMode = "ok";
+      provider.generateSearchQueries({
+        profileSummary: "x",
+        desiredRoles: ["A"],
+        skills: [],
+        preferredLocations: [],
+        experienceLevels: [],
+      }),
+    ).rejects.toThrow(/Search query generation failed/);
+    expect(calls.length).toBe(1);
+  });
+
+  it("never leaks the API key in provider errors", async () => {
+    const secret = "sk-super-secret-do-not-leak";
+    responder = () => new Response("upstream exploded", { status: 500 });
+    const provider = new CredentialBoundAIProvider({ ...OPENAI, apiKey: secret });
+    try {
+      await provider.generateSearchQueries({
+        profileSummary: "x",
+        desiredRoles: ["A"],
+        skills: [],
+        preferredLocations: [],
+        experienceLevels: [],
+      });
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect(String((err as Error).message)).not.toContain(secret);
+    }
   });
 });

@@ -2,11 +2,18 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { runSearchForUser } from "@/lib/services/search-service";
 import { rateLimit } from "@/lib/rate-limit";
+import { parseAiCredential } from "@/lib/ai/credential-header";
 
 export const maxDuration = 300;
 
-/** POST /api/search/run — run the full pipeline now. */
-export async function POST() {
+/**
+ * POST /api/search/run — run the full pipeline now.
+ *
+ * BYOK: the caller's active AI credential rides in the `X-AI-Credential`
+ * header. Without one the run still fetches/stores jobs but skips matching
+ * (surfaced in the summary notes).
+ */
+export async function POST(req: Request) {
   let userId: string;
   try {
     userId = (await requireUser()).id;
@@ -23,8 +30,11 @@ export async function POST() {
     );
   }
 
+  // Absent/malformed header → null → degraded (fetch/store-only) run.
+  const credential = parseAiCredential(req);
+
   try {
-    const summary = await runSearchForUser(userId, "MANUAL");
+    const summary = await runSearchForUser(userId, "MANUAL", credential);
     return NextResponse.json({ summary });
   } catch (e) {
     console.error("search run error", e);

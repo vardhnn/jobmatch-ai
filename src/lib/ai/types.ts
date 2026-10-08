@@ -69,6 +69,17 @@ export class AIPersistentError extends Error {
   }
 }
 
+/**
+ * Thrown when an AI feature is requested with no BYOK credential. Callers
+ * translate this into a friendly "add your key in Settings" response.
+ */
+export class AiNotConfiguredError extends Error {
+  constructor(message = "No AI key configured — add one in Settings → Intelligence Layer.") {
+    super(message);
+    this.name = "AiNotConfiguredError";
+  }
+}
+
 export interface AIProvider {
   readonly name: string;
   parseResume(resumeText: string): Promise<ParsedResume>;

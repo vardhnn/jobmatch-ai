@@ -9,6 +9,7 @@ import { RetroButton } from "@/components/ui/button";
 import { StatusBadge, StatusDot } from "@/components/ui/badge";
 import { ErrorBanner, EmptyState } from "@/components/ui/states";
 import { RetroProgress } from "@/components/ui/progress";
+import { getActiveProfile, aiFetch, type AiProfile } from "@/lib/client/ai-keys";
 
 type SubScores = {
   skills: number | null;
@@ -40,13 +41,6 @@ type Dashboard = {
     skillCount: number;
     desiredRoles: string[];
     postedWithinDays: number;
-  };
-  engines: {
-    aiModel: string;
-    aiFallbacks: string[];
-    aiProvider: string;
-    decisionModel: string;
-    decisionProvider: string;
   };
   lastRun: {
     id: string;
@@ -185,6 +179,7 @@ export default function DashboardPage() {
   const [running, setRunning] = useState(false);
   const [run, setRun] = useState<RunSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [profile, setProfile] = useState<AiProfile | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/dashboard");
@@ -196,6 +191,7 @@ export default function DashboardPage() {
   useEffect(() => {
     (async () => {
       try {
+        setProfile(getActiveProfile());
         await load();
       } catch {
         setError("Could not load the dashboard.");
@@ -209,10 +205,14 @@ export default function DashboardPage() {
     setError(null);
     setRun(null);
     try {
-      const res = await fetch("/api/search/run", { method: "POST" });
+      const res = await aiFetch("/api/search/run", { method: "POST" });
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(payload?.message ?? "Search failed.");
+        setError(
+          payload?.error === "AI_NOT_CONFIGURED"
+            ? payload?.message ?? "Add your AI key in Settings to run matching."
+            : payload?.message ?? "Search failed.",
+        );
         return;
       }
       setRun(payload.summary);
@@ -266,9 +266,15 @@ export default function DashboardPage() {
             <RetroButton onClick={load} disabled={running}>
               REFRESH
             </RetroButton>
-            <RetroButton variant="primary" onClick={runSearch} disabled={running}>
-              {running ? "SEARCHING..." : "RUN SEARCH NOW"}
-            </RetroButton>
+            {profile ? (
+              <RetroButton variant="primary" onClick={runSearch} disabled={running}>
+                {running ? "SEARCHING..." : "RUN SEARCH NOW"}
+              </RetroButton>
+            ) : (
+              <Link href="/settings">
+                <RetroButton variant="primary">CONFIGURE AI →</RetroButton>
+              </Link>
+            )}
           </>
         }
       />
@@ -472,17 +478,21 @@ export default function DashboardPage() {
         <section>
           <SectionHeader eyebrow="ENGINES" title="What is deciding" />
           <Panel className="flex flex-col gap-3 p-5">
-            <Row label="DECISION ENGINE" value={`${data?.engines.decisionProvider} · ${data?.engines.decisionModel}`} ok={data?.engines.decisionProvider === "jev"} />
-            <Row label="AI MODEL" value={data?.engines.aiModel ?? "—"} ok={Boolean(data?.engines.aiProvider === "openrouter")} />
-            <Row
-              label="FALLBACKS"
-              value={data?.engines.aiFallbacks?.join(" → ") ?? "none"}
-              ok={Boolean(data?.engines.aiFallbacks?.length)}
-            />
+            {profile ? (
+              <>
+                <Row label="AI CREDENTIAL" value={`${profile.provider} · ${profile.model}`} ok />
+                <Row label="DECISION ENGINE" value={profile.provider === "openrouter" ? "jev · typesafe/jev-1.13" : "deterministic dev engine"} ok />
+              </>
+            ) : (
+              <>
+                <Row label="AI CREDENTIAL" value="none — add a key in Settings" ok={false} />
+                <Row label="DECISION ENGINE" value="paused (needs a key)" ok={false} />
+              </>
+            )}
             <p className="text-xs leading-relaxed text-ink-soft">
-              JEV answers typed questions (fit category, six sub-scores, show/hide) through
-              OpenRouter&rsquo;s Decisions API. The chat model only parses text and writes
-              explanations — when the primary model is rate-limited the chain above takes over.
+              {profile
+                ? "Your own key scores every posting. When the active key is an OpenRouter key, the JEV decision model answers typed show/hide + sub-score questions; other providers use the built-in deterministic engine."
+                : "Add your own API key in Settings → Intelligence Layer to enable resume parsing, job analysis and matching. Searches still fetch and store postings without a key."}
             </p>
           </Panel>
         </section>

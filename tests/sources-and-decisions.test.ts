@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { stripHtml, inferArrangement, toInt } from "@/lib/sources/types";
 import { dedupeKeyFor } from "@/lib/services/dedupe";
-import { scoreAnswerToHundred } from "@/lib/ai/openrouter-client";
+import { scoreAnswerToHundred } from "@/lib/ai/decisions";
 
 /**
  * Pure-logic tests for the source adapters' shared normalization and for the

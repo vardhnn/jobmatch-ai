@@ -1,6 +1,7 @@
 "use server-only";
 
 import { prisma } from "@/lib/db";
+import type { AiCredential } from "@/lib/ai/providers";
 import { fetchFromSource, getAdapter, listAdapters, DEFAULT_ENABLED_KEYS, ALL_SOURCE_KEYS } from "@/lib/sources";
 import type { RawJob } from "@/lib/sources";
 import { generateQueriesForUser } from "./search-query-service";
@@ -49,9 +50,13 @@ export type SearchRunSummary = {
   finishedAt: string;
 };
 
+export const AI_SKIPPED_NOTE =
+  "AI matching skipped — no API key configured. Add one in Settings → Intelligence Layer.";
+
 export async function runSearchForUser(
   userId: string,
   trigger: "MANUAL" | "SCHEDULED" = "MANUAL",
+  credential?: AiCredential | null,
 ): Promise<SearchRunSummary> {
   // Counted before the new row exists, so the rotation window advances by one
   // per run and every query term eventually gets searched.
@@ -76,7 +81,7 @@ export async function runSearchForUser(
     }
 
     const [queries, inputs, sources, prefsRow] = await Promise.all([
-      generateQueriesForUser(userId),
+      generateQueriesForUser(userId, credential ?? null),
       buildDecisionInputs(userId),
       prisma.jobSource.findMany({ where: { userId, enabled: true } }),
       prisma.jobPreferences.findUnique({ where: { userId } }),
@@ -248,11 +253,15 @@ export async function runSearchForUser(
     }
 
     // ── 4. Analyze + decide (bounded parallelism) ─────────────────────────
+    // BYOK: without a credential the pipeline stops after storing jobs — the
+    // stored rows are matched by the next key-carrying run via the orphan path.
     let analyzed = 0;
     let strongMatches = 0;
     let potentialMatches = 0;
     let lowMatches = 0;
     let hidden = 0;
+
+    if (credential) {
 
     // Jobs stored earlier can still be unranked — e.g. they arrived before a
     // resume was parsed. Fold those in so a profile change actually re-scores
@@ -279,7 +288,7 @@ export async function runSearchForUser(
           return;
         }
         try {
-          const outcome = await matchJobForUser(userId, jobId);
+          const outcome = await matchJobForUser(userId, jobId, credential);
           if (!outcome) continue;
           analyzed++;
           if (outcome.decision === "HIDE") hidden++;
@@ -296,6 +305,7 @@ export async function runSearchForUser(
       }
     });
     await Promise.all(workers);
+    }
 
     // Mark jobs the user has already seen so the dashboard can hide repeats.
     const seen = await prisma.job.findMany({
@@ -314,6 +324,7 @@ export async function runSearchForUser(
     }
 
     const finishedAt = new Date();
+    const notes = credential ? warnings : [...warnings, AI_SKIPPED_NOTE];
     const summary: SearchRunSummary = {
       runId: run.id,
       queries: searchTerms,
@@ -328,7 +339,7 @@ export async function runSearchForUser(
       lowMatches,
       hidden,
       errors,
-      notes: warnings,
+      notes,
       searchedTerms: activeTerms,
       finishedAt: finishedAt.toISOString(),
     };
@@ -350,7 +361,7 @@ export async function runSearchForUser(
           // Advisories are persisted too: the dashboard falls back to the last
           // stored run after a reload, and an explanation that vanishes on
           // refresh is not an explanation.
-          sourceNotes: JSON.stringify(summary.notes),
+          sourceNotes: JSON.stringify(notes),
           searchedQueries: JSON.stringify(summary.searchedTerms),
           finishedAt,
         },
@@ -401,14 +412,14 @@ export async function runSearchForUser(
           // postings and dedupe correctly suppressed them. Silence here reads
           // as a broken pipeline.
           body:
-            newJobs > 0
+            (newJobs > 0
               ? `${newJobs} new of ${totalFound} seen across ${sources.length} source${sources.length === 1 ? "" : "s"}` +
                 (duplicates ? ` · ${duplicates} duplicates removed` : "") +
-                (errors.length ? ` · ${errors.length} source issue(s)` : "") +
-                "."
+                (errors.length ? ` · ${errors.length} source issue(s)` : "")
               : `All ${totalFound} postings from ${sources.length} source${sources.length === 1 ? "" : "s"} were already known — nothing new matched your preferences this run.` +
                 (duplicates ? ` ${duplicates} duplicates removed.` : "") +
-                (errors.length ? ` ${errors.length} source issue(s).` : ""),
+                (errors.length ? ` ${errors.length} source issue(s).` : "")) +
+            (credential ? "." : " Matching paused — add your AI key in Settings."),
           kind: "DAILY_SUMMARY",
           payload: JSON.stringify({ runId: run.id }),
         },

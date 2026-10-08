@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireUser, UnauthorizedError } from "@/lib/auth";
-import { config, publicConfig } from "@/lib/config";
 
 const parse = <T>(raw: string | null | undefined, fallback: T): T => {
   if (!raw) return fallback;
@@ -85,14 +84,8 @@ export async function GET() {
         desiredRoles: prefs ? parse<string[]>(prefs.desiredRoles, []) : [],
         postedWithinDays: prefs?.postedWithinDays ?? 14,
       },
-      engines: {
-        aiModel: config.ai.model,
-        aiFallbacks: config.ai.fallbackModels,
-        aiProvider: config.ai.provider,
-        decisionModel: config.decision.jevModel,
-        decisionProvider: config.decision.provider,
-        public: publicConfig(),
-      },
+      // Engine display (provider/model) is derived client-side from the
+      // user's active BYOK profile — see src/lib/client/ai-keys.ts.
       // The run summary is rendered from this on a cold load, so it carries
       // everything the live panel shows — not just the counters.
       lastRun: lastRun

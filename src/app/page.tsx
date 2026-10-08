@@ -314,20 +314,21 @@ export default async function LandingPage() {
                 <Panel className="hover-lift p-5">
                   <div className="mono-label mb-4">CURRENT CONFIGURATION</div>
                   <dl className="space-y-3 text-sm">
-                    <CfgRow label="Decision engine" value={cfg.decisionProvider} ok={cfg.jevConfigured} />
-                    <CfgRow label="Decision model" value={cfg.jevModel} ok={cfg.jevConfigured} />
-                    <CfgRow label="Language model" value={cfg.aiModel} ok={cfg.aiAvailable} />
+                    <CfgRow label="Decision engine" value="JEV (TypeSafe) · deterministic fallback" ok />
+                    <CfgRow label="Decision model" value="typesafe/jev-1.13" ok />
+                    <CfgRow label="Language model" value="Your own key (BYOK)" ok />
                     <CfgRow
-                      label="Fallback chain"
-                      value={cfg.aiFallbackModels.join(" → ") || "none"}
-                      ok={cfg.aiFallbackModels.length > 0}
+                      label="Supported providers"
+                      value="OpenAI-compatible · Anthropic · Gemini"
+                      ok
                     />
                     <CfgRow label="Search schedule" value={`${cfg.searchCron} (${cfg.searchTimezone})`} ok />
                   </dl>
                   <p className="mt-5 border-t border-line pt-4 text-xs leading-relaxed text-ink-soft">
-                    The decision model answers typed questions with probabilities — it never writes
-                    prose. The language model only parses text and explains results. Keeping them
-                    separate is what makes the reasoning reproducible.
+                    You bring the model: add an API key from any major provider — or any custom
+                    OpenAI-compatible endpoint, including local models — in Settings after signing
+                    up. The decision engine answers typed questions with probabilities and never
+                    writes prose; the language model only parses text and explains results.
                   </p>
                 </Panel>
               </div>
