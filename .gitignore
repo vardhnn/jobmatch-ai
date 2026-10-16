@@ -42,6 +42,8 @@ next-env.d.ts
 *.tsbuildinfo
 
 # JobMatch AI
+.freebuff/
+
 prisma/dev.db
 prisma/dev.db-journal
 !/.env.example
@@ -49,4 +51,3 @@ prisma/dev.db-journal
 # Runtime resume uploads — never ship the working tree's uploads.
 uploads/
 *cmu*
-
