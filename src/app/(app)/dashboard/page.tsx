@@ -180,6 +180,7 @@ export default function DashboardPage() {
   const [run, setRun] = useState<RunSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [profile, setProfile] = useState<AiProfile | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/dashboard");
@@ -204,6 +205,9 @@ export default function DashboardPage() {
     setRunning(true);
     setError(null);
     setRun(null);
+    // Clear the previous shortlist up-front so the section visibly empties
+    // while the new search fans out, then repopulates with fresh results.
+    setData((prev) => (prev ? { ...prev, topMatches: [] } : prev));
     try {
       const res = await aiFetch("/api/search/run", { method: "POST" });
       const payload = await res.json().catch(() => null);
@@ -213,12 +217,16 @@ export default function DashboardPage() {
             ? payload?.message ?? "Add your AI key in Settings to run matching."
             : payload?.message ?? "Search failed.",
         );
+        // The run failed — bring back the previous shortlist so the clear
+        // above doesn't leave the section empty on a mere rate-limit.
+        await load();
         return;
       }
       setRun(payload.summary);
       await load();
     } catch {
       setError("Network failure while running the search.");
+      await load();
     } finally {
       setRunning(false);
     }
@@ -502,21 +510,43 @@ export default function DashboardPage() {
           {!data?.recentRuns.length ? (
             <EmptyState code="NO RUNS" title="No searches yet" body="Run your first search to populate the board." />
           ) : (
-            <Panel className="divide-y divide-line">
-              {data.recentRuns.map((r) => (
-                <div key={r.id} className="flex items-center gap-3 px-4 py-3 text-sm">
-                  <StatusDot state={r.status === "COMPLETED" ? "ok" : r.status === "RUNNING" ? "warn" : "off"} />
-                  <span className="font-mono-face text-xs text-ink-soft">
-                    {new Date(r.startedAt).toLocaleString()}
-                  </span>
-                  <span className="mono-label">{r.trigger}</span>
-                  <span className="ml-auto text-ink-soft">
-                    {r.newJobs} new / {r.totalFound} ·{" "}
-                    <span style={{ color: "var(--term)" }}>{r.strongMatches} strong</span> ·{" "}
-                    <span style={{ color: "var(--amber)" }}>{r.potentialMatches} potential</span>
-                  </span>
+            <Panel className="p-0">
+              <button
+                type="button"
+                onClick={() => setHistoryOpen((o) => !o)}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-sunken"
+                aria-expanded={historyOpen}
+              >
+                <StatusDot state={data.recentRuns[0]?.status === "COMPLETED" ? "ok" : "warn"} />
+                <span className="mono-label">
+                  {historyOpen ? "▼" : "▶"} {data.recentRuns.length} RUNS
+                </span>
+                <span className="font-mono-face text-xs text-ink-soft">
+                  latest: {new Date(data.recentRuns[0].startedAt).toLocaleString()}
+                </span>
+                <span className="ml-auto text-ink-soft">
+                  {data.recentRuns[0].newJobs} new / {data.recentRuns[0].totalFound} ·{" "}
+                  <span style={{ color: "var(--term)" }}>{data.recentRuns[0].strongMatches} strong</span>
+                </span>
+              </button>
+              {historyOpen ? (
+                <div className="divide-y divide-line border-t border-line">
+                  {data.recentRuns.map((r) => (
+                    <div key={r.id} className="flex items-center gap-3 px-4 py-3 text-sm">
+                      <StatusDot state={r.status === "COMPLETED" ? "ok" : r.status === "RUNNING" ? "warn" : "off"} />
+                      <span className="font-mono-face text-xs text-ink-soft">
+                        {new Date(r.startedAt).toLocaleString()}
+                      </span>
+                      <span className="mono-label">{r.trigger}</span>
+                      <span className="ml-auto text-ink-soft">
+                        {r.newJobs} new / {r.totalFound} ·{" "}
+                        <span style={{ color: "var(--term)" }}>{r.strongMatches} strong</span> ·{" "}
+                        <span style={{ color: "var(--amber)" }}>{r.potentialMatches} potential</span>
+                      </span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              ) : null}
             </Panel>
           )}
         </section>
